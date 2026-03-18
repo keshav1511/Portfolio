@@ -5,7 +5,7 @@ import { useScroll, useTransform, useMotionValueEvent } from 'framer-motion';
 
 export default function ScrollyCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [images, setImages] = useState<HTMLImageElement[]>([]);
+  const imagesRef = useRef<HTMLImageElement[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const { scrollYProgress } = useScroll();
@@ -13,34 +13,14 @@ export default function ScrollyCanvas() {
   const totalFrames = 120;
   const frameIndex = useTransform(scrollYProgress, [0, 1], [0, totalFrames - 1]);
 
-  useEffect(() => {
-    const loadImages = async () => {
-      const loadedImages: HTMLImageElement[] = [];
-      let loadedCount = 0;
-
-      for (let i = 0; i < totalFrames; i++) {
-        const img = new Image();
-        const frameStr = String(i).padStart(3, '0');
-        img.src = `/sequence/frame_${frameStr}_delay-0.066s.png`;
-        img.onload = () => {
-          loadedCount++;
-          if (loadedCount === totalFrames) {
-            setLoaded(true);
-          }
-        };
-        loadedImages.push(img);
-      }
-      setImages(loadedImages);
-    };
-
-    loadImages();
-  }, []);
-
   const drawFrame = useCallback((index: number) => {
     const canvas = canvasRef.current;
-    if (!canvas || images.length === 0) return;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    const images = imagesRef.current;
+    if (images.length === 0) return;
 
     const img = images[index];
     if (!img) return;
@@ -68,7 +48,34 @@ export default function ScrollyCanvas() {
     }
 
     ctx.drawImage(img, dx, dy, dWidth, dHeight);
-  }, [images]);
+  }, []); // No state dependencies, fully stable closure
+
+  useEffect(() => {
+    const loadImages = async () => {
+      const loadedImages: HTMLImageElement[] = [];
+      let loadedCount = 0;
+
+      for (let i = 0; i < totalFrames; i++) {
+        const img = new Image();
+        const frameStr = String(i).padStart(3, '0');
+        img.src = `/sequence/frame_${frameStr}_delay-0.066s.png`;
+        img.onload = () => {
+          loadedCount++;
+          if (loadedCount === totalFrames) {
+            setLoaded(true);
+          }
+          // Redraw current frame as frames load in incrementally
+          if (Math.floor(frameIndex.get()) === i) {
+            drawFrame(i);
+          }
+        };
+        loadedImages.push(img);
+      }
+      imagesRef.current = loadedImages;
+    };
+
+    loadImages();
+  }, [frameIndex, drawFrame]); // frameIndex and drawFrame are stable hooks
 
   useMotionValueEvent(frameIndex, 'change', (latest) => {
     drawFrame(Math.floor(latest));
@@ -96,13 +103,14 @@ export default function ScrollyCanvas() {
     handleResize();
 
     return () => window.removeEventListener('resize', handleResize);
-  }, [images, frameIndex, loaded, drawFrame]);
+  }, [frameIndex, drawFrame]);
 
   useEffect(() => {
-    if (loaded && images.length > 0) {
-      drawFrame(0);
+    if (loaded) {
+      const currentIndex = Math.floor(frameIndex.get());
+      drawFrame(currentIndex);
     }
-  }, [loaded, images, drawFrame]);
+  }, [loaded, frameIndex, drawFrame]);
 
   return (
     <div className="fixed top-0 left-0 w-full h-screen -z-10 overflow-hidden">
